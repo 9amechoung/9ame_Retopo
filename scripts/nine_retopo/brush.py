@@ -1,11 +1,10 @@
 """Viewport relax brush: drag over a retopo mesh to relax it onto the surface."""
 
-import maya.api.OpenMaya as om
-import maya.api.OpenMayaUI as omui
 import maya.cmds as cmds
 
 from nine_retopo import geometry, mesh_utils
 from nine_retopo.surface import Projector
+from nine_retopo.viewport import MeshRaycaster
 
 CONTEXT = "nineRetopoRelaxBrushCtx"
 
@@ -16,7 +15,7 @@ class RelaxBrush(object):
         self.strength = 0.3
         self.keep_boundary = True
         self.mesh = None
-        self._fn = None
+        self._raycaster = None
         self._positions = None
         self._neighbors = None
         self._boundary = None
@@ -45,8 +44,7 @@ class RelaxBrush(object):
     def _press(self):
         if not self.mesh or not cmds.objExists(self.mesh):
             return
-        dag = mesh_utils.mesh_path(self.mesh)
-        self._fn = om.MFnMesh(dag)
+        self._raycaster = MeshRaycaster(mesh_utils.mesh_path(self.mesh))
         self._neighbors, self._boundary = mesh_utils.topology(self.mesh)
         self._positions = dict(enumerate(mesh_utils.get_points(self.mesh)))
         self._projector = Projector()
@@ -56,29 +54,17 @@ class RelaxBrush(object):
         self._stroke(x, y)
 
     def _drag(self):
-        if self._fn is None:
+        if self._raycaster is None:
             return
         x, y, _ = cmds.draggerContext(CONTEXT, query=True, dragPoint=True)
         self._stroke(x, y)
 
     def _release(self):
-        self._fn = None
+        self._raycaster = None
         self._positions = None
 
-    def _hit(self, x, y):
-        view = omui.M3dView.active3dView()
-        source, direction = om.MPoint(), om.MVector()
-        view.viewToWorld(int(x), int(y), source, direction)
-        hit = self._fn.closestIntersection(
-            om.MFloatPoint(source), om.MFloatVector(direction),
-            om.MSpace.kWorld, 1e9, False)
-        if not hit or hit[2] < 0:
-            return None
-        p = hit[0]
-        return (p.x, p.y, p.z)
-
     def _stroke(self, x, y):
-        center = self._hit(x, y)
+        center = self._raycaster.hit(x, y)
         if center is None:
             return
         weights = {}

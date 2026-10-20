@@ -9,7 +9,7 @@ try:
 except ImportError:
     from PySide2 import QtWidgets
 
-from nine_retopo import brush, loops, relax, strip, surface
+from nine_retopo import brush, loops, rail_tool, relax, strip, surface
 
 WINDOW_NAME = "nineRetopoWindow"
 
@@ -90,16 +90,38 @@ class RetopoWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         self.strip_merge.setChecked(True)
         self.strip_snap = QtWidgets.QCheckBox("Snap to live surface")
         self.strip_snap.setChecked(True)
+        self.rail_smooth = _spin(3, 0, 50, "Smoothing passes for freehand strokes")
+        draw_btn = QtWidgets.QPushButton("Draw Rails")
+        draw_btn.setToolTip("Drag on the live surface. Each new rail builds a strip "
+                            "from the previous one. Shift-drag starts a new chain.")
+        draw_btn.clicked.connect(lambda: _run(
+            rail_tool.activate, self.spans_along.value(), self.spans_across.value(),
+            self.rail_smooth.value()))
+        new_chain_btn = QtWidgets.QPushButton("New Chain")
+        new_chain_btn.clicked.connect(lambda: _run(rail_tool.reset))
+        draw_row = QtWidgets.QHBoxLayout()
+        draw_row.addWidget(draw_btn)
+        draw_row.addWidget(new_chain_btn)
+        for spin in (self.spans_along, self.spans_across, self.rail_smooth):
+            spin.valueChanged.connect(self._sync_rail_tool)
+
         btn = QtWidgets.QPushButton("Build Strip (select 2 rails)")
         btn.clicked.connect(lambda: _run(
             strip.build_strip, self.spans_along.value(), self.spans_across.value(),
             self.strip_merge.isChecked(), self.strip_snap.isChecked()))
         form.addRow("Spans along", self.spans_along)
         form.addRow("Spans across", self.spans_across)
+        form.addRow("Stroke smoothing", self.rail_smooth)
+        form.addRow(draw_row)
         form.addRow(self.strip_merge)
         form.addRow(self.strip_snap)
         form.addRow(btn)
         return group
+
+    def _sync_rail_tool(self, *_):
+        rail_tool.tool.spans_along = self.spans_along.value()
+        rail_tool.tool.spans_across = self.spans_across.value()
+        rail_tool.tool.smooth = self.rail_smooth.value()
 
     # Edge loop ----------------------------------------------------------
     def _loop_group(self):

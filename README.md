@@ -16,11 +16,26 @@ zRail 스타일의 Maya 리토폴로지 도구입니다. 레일 두 개 사이�
 | 기능 | 방법 |
 |---|---|
 | **Live Surface** | 하이폴리 메쉬 선택 → *Set From Selection*. 스냅 기준이 되고, `makeLive` 로 Maya 커브 툴도 표면에 붙습니다. |
+| **Draw Rails** | zRail 방식 드로잉 툴입니다. 하이폴리 위에 드래그해서 레일을 그리면 두 번째 레일부터 스트립이 자동으로 생기고, 이후 레일은 직전 스트립 끝에서 계속 이어집니다. |
 | **Build Strip** | 레일 2개 선택 → 버튼. 레일은 NURBS 커브(Live 상태에서 그린 커브)나 리토폴 메쉬의 엣지 체인 모두 가능합니다. |
 | **Insert Edge Loop** | 엣지 하나 선택 → 링 전체에 루프 추가 후 새 버텍스를 표면에 스냅합니다. |
 | **Relax Selection** | 버텍스/엣지/페이스/메쉬 선택 → 라플라시안 릴랙스 후 표면에 재투영합니다. |
 | **Snap To Surface** | 선택한 버텍스를 표면으로 투영합니다. |
 | **Relax Brush** | 리토폴 메쉬 선택 → 활성화 → 뷰포트에서 드래그합니다. 반경은 월드 단위입니다. |
+
+### Draw Rails (zRail 방식)
+
+1. 하이폴리를 Live Surface로 설정합니다.
+2. **Draw Rails**를 누르고 뷰포트에서 하이폴리 위에 드래그합니다.
+   - 첫 번째 스트로크는 노란 가이드 레일로 남습니다.
+   - 두 번째 스트로크를 놓는 순간 두 레일 사이에 스트립이 생깁니다.
+   - 계속 그리면 직전 스트립의 끝 엣지에서 이어지고, 하나의 메쉬로 웰드됩니다.
+3. **Shift + 드래그**로 그리면 새 체인을 시작합니다. 버튼 **New Chain**도 같은 동작입니다.
+4. 기존 리토폴 메쉬에서 이어 그리려면 테두리 엣지를 선택한 상태에서 Draw Rails를 켭니다.
+5. 시작점과 끝점이 가까운 스트로크는 닫힌 레일로 처리됩니다. 닫힌 레일 두 개를 그리면 원통형 스트립이 됩니다.
+6. Ctrl+Z는 스트로크 단위로 되돌립니다. 되돌린 뒤 이어 붙이기가 어긋나면 New Chain으로 새로 시작하세요.
+
+옵션(Spans along / Spans across / Stroke smoothing)은 툴 창의 Rail Strip 그룹에서 바꿉니다. Spans along이 `0`이면 첫 스트립은 정사각형에 가까운 쿼드로 나누고, 이어지는 스트립은 앞 스트립과 같은 분할 수를 씁니다.
 
 ### Build Strip 옵션
 
@@ -40,6 +55,8 @@ scripts/nine_retopo/
   mesh_utils.py             메쉬 읽기/쓰기, 선택 처리, undo
   surface.py                Live Surface 와 투영
   strip.py                  레일 → 스트립
+  rail_tool.py              zRail 방식 레일 드로잉 툴 (draggerContext)
+  viewport.py               화면 좌표 → 메쉬 레이캐스트
   loops.py                  엣지 루프 삽입
   relax.py                  릴랙스
   brush.py                  뷰포트 릴랙스 브러시 (draggerContext)

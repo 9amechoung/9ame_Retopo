@@ -102,5 +102,20 @@ class RelaxTest(unittest.TestCase):
         self.assertGreater(n[2], 0)
 
 
+class StrokeTest(unittest.TestCase):
+    def test_smooth_keeps_ends(self):
+        pts = [(0, 0, 0), (1, 1, 0), (2, -1, 0), (3, 0, 0)]
+        out = g.smooth_polyline(pts, 2)
+        self.assertEqual(out[0], pts[0])
+        self.assertEqual(out[-1], pts[-1])
+        self.assertLess(abs(out[1][1]), 1)
+
+    def test_closed_stroke(self):
+        circle = [(1, 0, 0), (0, 1, 0), (-1, 0, 0), (0, -1, 0), (0.95, -0.05, 0)]
+        self.assertTrue(g.is_closed_stroke(circle))
+        line = [(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0)]
+        self.assertFalse(g.is_closed_stroke(line))
+
+
 if __name__ == "__main__":
     unittest.main()

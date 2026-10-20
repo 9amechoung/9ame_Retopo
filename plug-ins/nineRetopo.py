@@ -13,6 +13,8 @@ MENU_ITEMS = (
     ("Set Live Surface", "from nine_retopo import surface; surface.set_live_surface()"),
     ("Clear Live Surface", "from nine_retopo import surface; surface.clear_live_surface()"),
     None,
+    ("Draw Rails", "from nine_retopo import rail_tool; rail_tool.activate()"),
+    ("New Rail Chain", "from nine_retopo import rail_tool; rail_tool.reset()"),
     ("Build Strip", "from nine_retopo import strip; strip.build_strip()"),
     ("Insert Edge Loop", "from nine_retopo import loops; loops.insert_edge_loop()"),
     ("Relax Selection", "from nine_retopo import relax; relax.relax_selection()"),

@@ -153,7 +153,19 @@ def build_strip(spans_along=0, spans_across=1, merge=True, snap=True):
     if len(rails) != 2:
         raise RuntimeError("Select exactly two rails (curves or edge chains); "
                            "found %d." % len(rails))
-    rail_a, rail_b = rails
+    mesh, _ = build_strip_from_rails(rails[0], rails[1], spans_along,
+                                     spans_across, merge, snap)
+    cmds.select(mesh)
+    return mesh
+
+
+def build_strip_from_rails(rail_a, rail_b, spans_along=0, spans_across=1,
+                           merge=True, snap=True):
+    """Build a quad strip between two rails.
+
+    Returns ``(mesh, far_rail)`` where ``far_rail`` is the strip's edge along
+    ``rail_b``, usable as the first rail of a following strip.
+    """
     if rail_a.closed != rail_b.closed:
         raise RuntimeError("Both rails must be open or both closed.")
     closed = rail_a.closed
@@ -202,5 +214,8 @@ def build_strip(spans_along=0, spans_across=1, merge=True, snap=True):
 
     if merge and targets:
         strip = _merge_into(targets, strip, tolerance)
-    cmds.select(strip)
-    return strip
+
+    far_row = vertices[(rows - 1) * columns:rows * columns]
+    if closed:
+        far_row = far_row[:-1]
+    return strip, Rail(far_row, closed, strip)

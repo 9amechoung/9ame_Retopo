@@ -231,3 +231,32 @@ def relax_step(positions, neighbors, weights):
         target = average(positions[n] for n in nbrs)
         result[vid] = lerp(positions[vid], target, min(w, 1.0))
     return result
+
+
+def smooth_polyline(points, iterations=3, closed=False):
+    """Smooth a freehand stroke; open strokes keep their end points."""
+    pts = [tuple(p) for p in points]
+    n = len(pts)
+    if n < 3:
+        return pts
+    for _ in range(iterations):
+        out = list(pts)
+        for i in range(n):
+            if not closed and (i == 0 or i == n - 1):
+                continue
+            prev_p = pts[(i - 1) % n]
+            next_p = pts[(i + 1) % n]
+            out[i] = lerp(pts[i], scale(add(prev_p, next_p), 0.5), 0.5)
+        pts = out
+    return pts
+
+
+def is_closed_stroke(points, tolerance=0.08):
+    """True when a stroke ends near where it started.
+
+    ``tolerance`` is a fraction of the stroke length.
+    """
+    if len(points) < 4:
+        return False
+    total = polyline_length(points)
+    return total > EPSILON and distance(points[0], points[-1]) < total * tolerance
