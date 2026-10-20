@@ -11,6 +11,11 @@ zRail 스타일의 Maya 리토폴로지 도구입니다. 레일 두 개 사이�
 2. `install.py` 를 Maya 뷰포트에 드래그 앤 드롭합니다.
 3. 메인 메뉴바에 **9ame Retopo** 메뉴가 생깁니다. 다음 실행부터는 모듈 파일 `nine_retopo.mod` 로 자동 로드됩니다.
 
+## 삭제 / 업데이트
+
+- **삭제**: `uninstall.py` 를 뷰포트에 드래그 앤 드롭하거나 **9ame Retopo → Uninstall** 을 누릅니다. 플러그인 언로드, 메뉴·창 제거, 모듈 파일 삭제까지 처리하므로 그 다음 폴더를 지우면 됩니다.
+- **업데이트**: 언인스톨 → 기존 폴더 삭제 → 새 버전 폴더의 `install.py` 드래그 앤 드롭. Maya 재시작은 필요 없습니다. 새 폴더의 `install.py` 만 바로 드롭해도 이전 버전을 먼저 정리합니다.
+
 ## 사용법
 
 | 기능 | 방법 |
@@ -49,6 +54,7 @@ zRail 스타일의 Maya 리토폴로지 도구입니다. 레일 두 개 사이�
 
 ```
 install.py                  드래그 앤 드롭 설치
+uninstall.py                드래그 앤 드롭 삭제
 plug-ins/nineRetopo.py      플러그인 (메뉴 등록)
 scripts/nine_retopo/
   geometry.py               Maya 비의존 기하 계산 (리샘플, 정렬, 그리드, 릴랙스)

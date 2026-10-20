@@ -1,5 +1,8 @@
 """9ame Retopo plug-in: adds a "9ame Retopo" menu to Maya's main window."""
 
+import os
+import runpy
+
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
 import maya.mel as mel
@@ -37,6 +40,16 @@ def _build_menu():
         else:
             label, command = item
             cmds.menuItem(label=label, command=command, sourceType="python", parent=MENU)
+    cmds.menuItem(divider=True, parent=MENU)
+    cmds.menuItem(label="Uninstall", parent=MENU,
+                  command=lambda *_: cmds.evalDeferred(_uninstall))
+
+
+def _uninstall():
+    # Deferred so the plug-in isn't unloaded from inside its own menu callback.
+    plugin_dir = os.path.dirname(cmds.pluginInfo("nineRetopo", query=True, path=True))
+    script = os.path.join(os.path.dirname(plugin_dir), "uninstall.py")
+    runpy.run_path(script)["uninstall"]()
 
 
 def _delete_menu():

@@ -5,6 +5,7 @@ and plug-in on every launch, and loads the plug-in right away.
 """
 
 import os
+import runpy
 import sys
 
 import maya.cmds as cmds
@@ -15,6 +16,9 @@ PLUGIN_NAME = "nineRetopo"
 
 def install():
     root = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
+    # Remove any previous install (also from another folder) first.
+    runpy.run_path(os.path.join(root, "uninstall.py"))["unload"]()
+
     modules_dir = os.path.join(cmds.internalVar(userAppDir=True), "modules")
     if not os.path.isdir(modules_dir):
         os.makedirs(modules_dir)
@@ -26,8 +30,7 @@ def install():
     if scripts not in sys.path:
         sys.path.append(scripts)
     plugin = root + "/plug-ins/" + PLUGIN_NAME + ".py"
-    if not cmds.pluginInfo(PLUGIN_NAME, query=True, loaded=True):
-        cmds.loadPlugin(plugin)
+    cmds.loadPlugin(plugin)
     cmds.pluginInfo(PLUGIN_NAME, edit=True, autoload=True)
     cmds.confirmDialog(title="9ame Retopo",
                        message="Installed. Use the '9ame Retopo' menu.",
