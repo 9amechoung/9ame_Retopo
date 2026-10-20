@@ -63,7 +63,7 @@ class RailTool(object):
         if cmds.draggerContext(CONTEXT, exists=True):
             cmds.draggerContext(CONTEXT, edit=True, **callbacks)
         else:
-            cmds.draggerContext(CONTEXT, cursor="pencil", space="screen",
+            cmds.draggerContext(CONTEXT, cursor="crossHair", space="screen",
                                 undoMode="all", name=CONTEXT, **callbacks)
         cmds.setToolTo(CONTEXT)
 
