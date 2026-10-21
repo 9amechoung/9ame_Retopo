@@ -120,6 +120,35 @@ class RingTest(unittest.TestCase):
         self.assertEqual(g.closest_param_on_segment((-4, 0, 0), (0, 0, 0), (10, 0, 0)), 0.0)
 
 
+class BorderTest(unittest.TestCase):
+    def test_grid_has_four_sides(self):
+        sides = g.border_sides(RingTest.GRID)
+        self.assertEqual(len(sides), 4)
+        self.assertEqual(sorted(len(ids) for ids, _ in sides), [3, 3, 4, 4])
+        self.assertFalse(any(closed for _, closed in sides))
+        ends = sorted(tuple(sorted((ids[0], ids[-1]))) for ids, _ in sides)
+        self.assertEqual(ends, [(0, 3), (0, 8), (3, 11), (8, 11)])
+
+    def test_cylinder_rims_are_closed(self):
+        faces = [[i, (i + 1) % 4, 4 + (i + 1) % 4, 4 + i] for i in range(4)]
+        sides = g.border_sides(faces)
+        self.assertEqual(len(sides), 2)
+        self.assertTrue(all(closed for _, closed in sides))
+
+    def test_auto_across_square(self):
+        a = [(0, 0, 0), (1, 0, 0), (2, 0, 0)]
+        b = [(0, 3, 0), (1, 3, 0), (2, 3, 0)]
+        self.assertEqual(g.auto_across(a, b), 3)
+
+    def test_bridge_cost_prefers_near_rail(self):
+        side = [(0, 0, 0), (0, 1, 0)]
+        near = [(0.5, 0, 0), (0.5, 1, 0)]
+        far = [(5, 0, 0), (5, 1, 0)]
+        self.assertLess(g.bridge_cost(side, False, near, False),
+                        g.bridge_cost(side, False, far, False))
+        self.assertIsNone(g.bridge_cost(side, False, near, True))
+
+
 class RelaxTest(unittest.TestCase):
     def test_moves_towards_neighbour_average(self):
         pos = {0: (0, 0, 0), 1: (1, 5, 0), 2: (2, 0, 0)}

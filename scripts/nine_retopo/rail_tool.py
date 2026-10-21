@@ -3,6 +3,8 @@
 Drag on the live surface to draw a rail. While the stroke is drawn, the
 strip it would make is previewed live; releasing builds it, and every
 following rail continues from the edge of the previous strip, welded to it.
+A stroke drawn next to any other border side of a retopo mesh (the end of
+a strip, say) grows the mesh from that side instead.
 Start with mesh edges selected to continue from an existing retopo mesh.
 Shift-drag starts a new chain. Ctrl-drag over a retopo mesh slides a new
 edge loop along the ring under the cursor and inserts it on release.
@@ -21,6 +23,9 @@ from nine_retopo.viewport import MeshRaycaster
 CONTEXT = "nineRetopoRailCtx"
 RAIL_COLOR = 17  # yellow
 CUT_COLOR = 18  # cyan
+# A stroke bridges to a mesh border side only when its average gap to it is
+# within this many times the longer of the two.
+SIDE_REACH = 4.0
 
 
 def _preview_curve(points, closed, curve=None, color=RAIL_COLOR):
@@ -97,8 +102,10 @@ class StripPreview(object):
 class RailTool(object):
     def __init__(self):
         self.spans_along = 0
-        self.spans_across = 1
+        self.spans_across = 0
         self.smooth = 3
+        self._sides = []  # border sides of retopo meshes, gathered per stroke
+        self._fresh = False  # next stroke must start a new chain
         self._rail = None
         self._rail_curve = None
         self._stroke = []
@@ -117,6 +124,7 @@ class RailTool(object):
         if not get_live_surface():
             raise RuntimeError("Set a live surface first.")
         self.reset()
+        self._fresh = False  # strokes may grow existing retopo meshes
         # Continue from selected border edges of an existing retopo mesh.
         edge_rails = [r for r in strip.rails_from_selection() if r.mesh]
         if edge_rails:
@@ -134,11 +142,15 @@ class RailTool(object):
         cmds.setToolTo(CONTEXT)
 
     def reset(self):
-        """Forget the pending rail so the next stroke starts a new chain."""
+        """Forget the pending rail so the next stroke starts a new chain.
+
+        That stroke becomes a guide rail even next to an existing mesh.
+        """
         _delete(self._rail_curve)
         self._rail = None
         self._rail_curve = None
         self._chain = None
+        self._fresh = True
 
     def chain_mesh(self):
         """The mesh of the chain currently being drawn, if it is editable."""
@@ -187,6 +199,11 @@ class RailTool(object):
             return
         if modifier == "shift":
             self.reset()
+        if self._fresh:
+            self._sides = []  # a new chain never grows from an existing mesh
+        else:
+            self._sides = [side for mesh in display.retopo_meshes()
+                           for side in strip.border_rails(mesh)]
         self._mode = "draw"
         self._raycaster = MeshRaycaster(mesh_utils.mesh_path(surface))
         self._stroke = []
@@ -238,15 +255,42 @@ class RailTool(object):
         points = geometry.smooth_polyline(points, self.smooth, closed)
         return strip.Rail([self._projector.project(p) for p in points], closed)
 
+    def _source_for(self, rail):
+        """The rail the stroke bridges from.
+
+        Candidates are the pending rail (the guide rail or the far edge of
+        the chain) and every border side of the retopo meshes, so a stroke
+        drawn next to the end of a strip extends it there. The closest one
+        wins; the pending rail wins ties.
+        """
+        stroke_length = geometry.polyline_length(rail.points, rail.closed)
+        best, best_cost = None, None
+        pending = self._pending()
+        candidates = ([pending] if pending is not None else []) + self._sides
+        for candidate in candidates:
+            cost = geometry.bridge_cost(candidate.points, candidate.closed,
+                                        rail.points, rail.closed)
+            if cost is None:
+                continue
+            if candidate is not pending:
+                # Only bridge to a mesh side the stroke was drawn next to.
+                reach = max(stroke_length, geometry.polyline_length(
+                    candidate.points, candidate.closed))
+                if cost > SIDE_REACH * reach:
+                    continue
+            if best_cost is None or cost < best_cost:
+                best, best_cost = candidate, cost
+        return best
+
     def _update_preview(self):
         """Show the strip the stroke so far would build."""
-        pending = self._pending()
         rail = self._stroke_rail(self._stroke)
-        if pending is None or pending.closed != rail.closed:
+        source = self._source_for(rail)
+        if source is None:
             self._preview.clear()
             return
         try:
-            grid = strip.StripGrid(pending, rail, self._along_for(pending),
+            grid = strip.StripGrid(source, rail, self._along_for(source),
                                    self.spans_across, self._projector)
         except (RuntimeError, ValueError):
             self._preview.clear()
@@ -259,7 +303,8 @@ class RailTool(object):
         rail = self._stroke_rail(points)
 
         pending = self._pending()
-        if pending is None or pending.closed != rail.closed:
+        source = self._source_for(rail)
+        if source is None:
             if pending is not None:
                 om.MGlobal.displayWarning(
                     "Open and closed rails can't be bridged; starting a new chain.")
@@ -269,18 +314,25 @@ class RailTool(object):
             return
 
         mesh, far_rail = strip.build_strip_from_rails(
-            pending, rail, self._along_for(pending), self.spans_across,
+            source, rail, self._along_for(source), self.spans_across,
             merge=True, snap=True)
         _delete(self._rail_curve)
         self._rail_curve = None
         self._rail = far_rail
+        self._fresh = False
 
         # Remember the rails so span counts can still be changed afterwards.
-        if pending.mesh is None:
-            self._chain = chain.new_record(pending, self.spans_along)
-        if self._chain is not None:
-            chain.add_strip(self._chain, rail, self.spans_across)
-            chain.save(mesh, self._chain)
+        if source is not pending:
+            # Grown from another side of a mesh: no longer a single chain
+            # that can be rebuilt from its rails.
+            chain.forget(mesh)
+            self._chain = None
+        else:
+            if pending.mesh is None:
+                self._chain = chain.new_record(pending, self.spans_along)
+            if self._chain is not None:
+                chain.add_strip(self._chain, rail, self.spans_across)
+                chain.save(mesh, self._chain)
         cmds.select(mesh)
 
     def _along_for(self, pending):

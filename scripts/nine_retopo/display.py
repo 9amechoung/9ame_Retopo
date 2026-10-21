@@ -11,6 +11,7 @@ import maya.cmds as cmds
 TAG = "nineRetopoMesh"
 PLUGIN = "nineRetopo"
 OVERLAY_TYPE = "nineRetopoOverlay"
+OVERLAY_VAR = "nineRetopo_showOverlay"
 RETOPO_SHADER = ("nineRetopo_mtl", (0.32, 0.28, 0.95), 0.35)
 PREVIEW_SHADER = ("nineRetopoPreview_mtl", (0.25, 0.95, 0.35), 0.45)
 
@@ -66,20 +67,55 @@ def attach_overlay(mesh, preview=False):
     cmds.setAttr(overlay + ".overrideEnabled", True)
     cmds.setAttr(overlay + ".overrideDisplayType", 2)
     cmds.setAttr(xform + ".hiddenInOutliner", True)
+    cmds.setAttr(xform + ".visibility", preview or overlays_visible())
     for attr in ("translate", "rotate", "scale"):
         cmds.setAttr(xform + "." + attr, lock=True)
     return overlay
+
+
+def _overlays_of(mesh):
+    result = []
+    for shape in cmds.listRelatives(mesh, shapes=True, type="mesh", fullPath=True) or []:
+        result += cmds.listConnections(shape + ".worldMesh", type=OVERLAY_TYPE,
+                                       shapes=True) or []
+    return result
+
+
+def overlays_visible():
+    if not cmds.optionVar(exists=OVERLAY_VAR):
+        return True
+    return bool(cmds.optionVar(query=OVERLAY_VAR))
+
+
+def set_overlays_visible(visible):
+    """Show or hide every retopo overlay (the meshes keep their shader)."""
+    cmds.optionVar(intValue=(OVERLAY_VAR, int(bool(visible))))
+    for overlay in cmds.ls(type=OVERLAY_TYPE, long=True) or []:
+        if cmds.getAttr(overlay + ".preview"):
+            continue
+        xform = cmds.listRelatives(overlay, parent=True, fullPath=True)[0]
+        cmds.setAttr(xform + ".visibility", bool(visible))
+
+
+def is_retopo(mesh):
+    return cmds.attributeQuery(TAG, node=mesh, exists=True)
+
+
+def unstyle_retopo(mesh):
+    """Undo :func:`style_retopo`: plain shading, no overlay, no tag."""
+    for overlay in _overlays_of(mesh):
+        cmds.delete(cmds.listRelatives(overlay, parent=True, fullPath=True))
+    cmds.sets(mesh, edit=True, forceElement="initialShadingGroup")
+    if is_retopo(mesh):
+        cmds.deleteAttr(mesh + "." + TAG)
 
 
 def delete_with_overlay(mesh):
     """Delete ``mesh`` together with the overlay drawing it."""
     if not (mesh and cmds.objExists(mesh)):
         return
-    shapes = cmds.listRelatives(mesh, shapes=True, type="mesh", fullPath=True) or []
-    for shape in shapes:
-        for overlay in cmds.listConnections(shape + ".worldMesh", type=OVERLAY_TYPE,
-                                            shapes=True) or []:
-            cmds.delete(cmds.listRelatives(overlay, parent=True, fullPath=True))
+    for overlay in _overlays_of(mesh):
+        cmds.delete(cmds.listRelatives(overlay, parent=True, fullPath=True))
     cmds.delete(mesh)
 
 

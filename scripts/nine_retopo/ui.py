@@ -92,7 +92,7 @@ class RetopoWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         group = QtWidgets.QGroupBox("Rail Strip")
         form = QtWidgets.QFormLayout(group)
         self.spans_along = _spin(0, 0, 1000, "0 = auto (match edge rail or square quads)")
-        self.spans_across = _spin(1, 1, 1000)
+        self.spans_across = _spin(0, 0, 1000)
         self.strip_merge = QtWidgets.QCheckBox("Merge into edge rail mesh")
         self.strip_merge.setChecked(True)
         self.strip_snap = QtWidgets.QCheckBox("Snap to live surface")
@@ -108,14 +108,20 @@ class RetopoWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
             self.rail_smooth.value()))
         new_chain_btn = QtWidgets.QPushButton("New Chain")
         new_chain_btn.clicked.connect(lambda: _run(rail_tool.reset))
-        look_btn = QtWidgets.QPushButton("Retopo Look")
-        look_btn.setToolTip("Give the selected meshes the translucent retopo shader and "
-                            "let Ctrl-drag cut them.")
-        look_btn.clicked.connect(lambda: _run(self._style_selection))
+        look_btn = QtWidgets.QPushButton("Retopo Look On/Off")
+        look_btn.setToolTip("Toggle the retopo look on the selected meshes: translucent "
+                            "shader, on-top overlay, and Ctrl-drag cutting / growing from "
+                            "their borders. Turning it off restores plain shading.")
+        look_btn.clicked.connect(lambda: _run(self._toggle_look))
+        self.show_overlay = QtWidgets.QCheckBox("Show overlay (draw retopo on top)")
+        self.show_overlay.setChecked(display.overlays_visible())
+        self.show_overlay.toggled.connect(lambda on: _run(display.set_overlays_visible, on))
         draw_row = QtWidgets.QHBoxLayout()
         draw_row.addWidget(draw_btn)
         draw_row.addWidget(new_chain_btn)
-        draw_row.addWidget(look_btn)
+        look_row = QtWidgets.QHBoxLayout()
+        look_row.addWidget(look_btn)
+        look_row.addWidget(self.show_overlay)
         for spin in (self.spans_along, self.spans_across, self.rail_smooth):
             spin.setKeyboardTracking(False)  # rebuild once per typed number
             spin.valueChanged.connect(self._sync_rail_tool)
@@ -127,8 +133,8 @@ class RetopoWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
             "Segments along the drawn rails (blue). 0 = auto. Changing it rebuilds the "
             "selected chain, or the chain being drawn.")
         self.spans_across.setToolTip(
-            "Segments between two rails (red). Changing it rebuilds the selected chain, "
-            "or the chain being drawn.")
+            "Segments between two rails (red). 0 = auto (square quads). Changing it "
+            "rebuilds the selected chain, or the chain being drawn.")
 
         btn = QtWidgets.QPushButton("Build Strip (select 2 rails)")
         btn.clicked.connect(lambda: _run(
@@ -138,20 +144,31 @@ class RetopoWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         form.addRow(_colored_label("Spans across", ACROSS_COLOR), self.spans_across)
         form.addRow("Stroke smoothing", self.rail_smooth)
         form.addRow(draw_row)
+        form.addRow(look_row)
         form.addRow(self.strip_merge)
         form.addRow(self.strip_snap)
         form.addRow(btn)
         return group
 
     @staticmethod
-    def _style_selection():
-        meshes = cmds.ls(selection=True, objectsOnly=True, long=True) or []
-        meshes = [m for m in meshes
-                  if cmds.listRelatives(m, shapes=True, type="mesh", fullPath=True)]
+    def _toggle_look():
+        nodes = cmds.ls(selection=True, objectsOnly=True, long=True) or []
+        meshes = []
+        for node in nodes:
+            if cmds.nodeType(node) == "mesh":
+                node = cmds.listRelatives(node, parent=True, fullPath=True)[0]
+            if node not in meshes and cmds.listRelatives(
+                    node, shapes=True, type="mesh", fullPath=True):
+                meshes.append(node)
         if not meshes:
-            raise RuntimeError("Select the retopo meshes to style.")
+            raise RuntimeError("Select the retopo meshes to turn the look on or off.")
+        # Mixed selection: turn it on everywhere first, like a checkbox would.
+        turn_on = not all(display.is_retopo(m) for m in meshes)
         for mesh in meshes:
-            display.style_retopo(mesh)
+            if turn_on:
+                display.style_retopo(mesh)
+            else:
+                display.unstyle_retopo(mesh)
 
     def _sync_rail_tool(self, *_):
         rail_tool.tool.spans_along = self.spans_along.value()

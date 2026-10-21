@@ -59,6 +59,21 @@ def _edge_rails(dag, component):
     return rails
 
 
+def border_rails(mesh):
+    """Every side of ``mesh``'s open borders as a rail (split at corners)."""
+    dag = mesh_utils.mesh_path(mesh)
+    fn = om.MFnMesh(dag)
+    counts, connects = fn.getVertices()
+    faces, k = [], 0
+    for n in counts:
+        faces.append(list(connects[k:k + n]))
+        k += n
+    points = fn.getPoints(om.MSpace.kWorld)
+    name = mesh_utils.transform_name(dag)
+    return [Rail([(points[i].x, points[i].y, points[i].z) for i in ids], closed, name)
+            for ids, closed in geometry.border_sides(faces)]
+
+
 def rails_from_selection():
     """Collect rails from selected NURBS curves and mesh edges."""
     sel = om.MGlobal.getActiveSelectionList()
@@ -171,10 +186,13 @@ class StripGrid(object):
             raise RuntimeError("Both rails must be open or both closed.")
         self.closed = rail_a.closed
 
-        self.spans = _resolve_spans(rail_a, rail_b, spans_along, spans_across)
+        self.spans = _resolve_spans(rail_a, rail_b, spans_along, max(spans_across, 1))
         points_a, self.exact_a = _rail_points(rail_a, self.spans)
         points_b, self.exact_b = _rail_points(rail_b, self.spans)
         points_b = geometry.align_rails(points_a, points_b, self.closed)
+        if spans_across <= 0:
+            spans_across = geometry.auto_across(points_a, points_b, self.closed)
+        self.spans_across = spans_across
         if self.closed:
             points_a = points_a + [points_a[0]]
             points_b = points_b + [points_b[0]]
@@ -204,6 +222,8 @@ class StripGrid(object):
 def build_strip_from_rails(rail_a, rail_b, spans_along=0, spans_across=1,
                            merge=True, snap=True):
     """Build a quad strip between two rails.
+
+    ``spans_across`` of 0 picks a count that keeps the quads roughly square.
 
     Returns ``(mesh, far_rail)`` where ``far_rail`` is the strip's edge along
     ``rail_b``, usable as the first rail of a following strip.

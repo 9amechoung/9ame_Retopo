@@ -158,6 +158,66 @@ def auto_spans(rail_a, rail_b, spans_across, closed=False):
     return max(3 if closed else 1, int(round(along / quad)))
 
 
+def auto_across(rail_a, rail_b, closed=False):
+    """Segments between two aligned rails that give roughly square quads."""
+    segments = len(rail_a) if closed else len(rail_a) - 1
+    seg_length = polyline_length(rail_a, closed) / max(segments, 1)
+    if seg_length <= EPSILON:
+        return 1
+    across = sum(distance(p, q) for p, q in zip(rail_a, rail_b)) / len(rail_a)
+    return max(1, int(round(across / seg_length)))
+
+
+def bridge_cost(rail_a, closed_a, rail_b, closed_b, samples=8):
+    """Average gap between two rails once lined up; None if they can't bridge."""
+    if closed_a != closed_b:
+        return None
+    a = resample_polyline(rail_a, samples, closed_a)
+    b = align_rails(a, resample_polyline(rail_b, samples, closed_b), closed_a)
+    return sum(distance(p, q) for p, q in zip(a, b)) / samples
+
+
+def border_sides(faces):
+    """Split a mesh's open borders into sides at their corners.
+
+    A corner is a border vertex with only two edges (the corner of a quad
+    grid). Returns a list of ``(vertex_ids, closed)``; a border loop without
+    corners (the rim of a cylinder) is one closed side.
+    """
+    use = {}
+    degree = {}
+    for verts in faces:
+        n = len(verts)
+        for i in range(n):
+            key = frozenset((verts[i], verts[(i + 1) % n]))
+            use[key] = use.get(key, 0) + 1
+    for key in use:
+        for v in key:
+            degree[v] = degree.get(v, 0) + 1
+    border = [tuple(k) for k, count in use.items() if count == 1]
+    try:
+        chains = chains_from_edges(border)
+    except ValueError:
+        return []  # borders touching at a vertex; too ambiguous to split
+
+    sides = []
+    for ids, closed in chains:
+        corners = [i for i, v in enumerate(ids) if degree[v] == 2]
+        if closed:
+            if not corners:
+                sides.append((ids, True))
+                continue
+            ids = ids[corners[0]:] + ids[:corners[0]]
+            corners = [c - corners[0] for c in corners] + [len(ids)]
+            ids = ids + [ids[0]]
+        else:
+            corners = sorted(set([0] + corners + [len(ids) - 1]))
+        for start, end in zip(corners, corners[1:]):
+            if end > start:
+                sides.append((ids[start:end + 1], False))
+    return sides
+
+
 def chains_from_edges(edges):
     """Group ``(v0, v1)`` edge pairs into ordered vertex chains.
 
