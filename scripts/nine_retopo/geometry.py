@@ -96,8 +96,8 @@ def resample_polyline(points, count, closed=False):
     return result
 
 
-def align_rails(rail_a, rail_b, closed=False):
-    """Reorder ``rail_b`` so that rail_b[i] lies across from rail_a[i].
+def align_order(rail_a, rail_b, closed=False):
+    """Indices into ``rail_b`` so that ``rail_b[order[i]]`` lies across from rail_a[i].
 
     Both rails must have the same number of points. Open rails may be
     reversed; closed rails may also be rotated.
@@ -105,9 +105,9 @@ def align_rails(rail_a, rail_b, closed=False):
     if len(rail_a) != len(rail_b):
         raise ValueError("rails must have the same number of points")
     n = len(rail_b)
-    candidates = [list(rail_b), list(reversed(rail_b))]
+    candidates = [list(range(n)), list(reversed(range(n)))]
     if not closed:
-        cost = lambda r: distance(rail_a[0], r[0]) + distance(rail_a[-1], r[-1])
+        cost = lambda o: distance(rail_a[0], rail_b[o[0]]) + distance(rail_a[-1], rail_b[o[-1]])
         return min(candidates, key=cost)
 
     best = None
@@ -115,10 +115,53 @@ def align_rails(rail_a, rail_b, closed=False):
     for cand in candidates:
         for offset in range(n):
             rotated = cand[offset:] + cand[:offset]
-            cost = sum(distance(rail_a[i], rotated[i]) for i in range(n))
+            cost = sum(distance(rail_a[i], rail_b[rotated[i]]) for i in range(n))
             if best_cost is None or cost < best_cost:
                 best, best_cost = rotated, cost
     return best
+
+
+def align_rails(rail_a, rail_b, closed=False):
+    """Reorder ``rail_b`` so that rail_b[i] lies across from rail_a[i]."""
+    return [rail_b[i] for i in align_order(rail_a, rail_b, closed)]
+
+
+def border_loops(faces):
+    """Open borders of a mesh as ``(vertex_ids, closed)`` chains (not split)."""
+    use = {}
+    for verts in faces:
+        n = len(verts)
+        for i in range(n):
+            key = frozenset((verts[i], verts[(i + 1) % n]))
+            use[key] = use.get(key, 0) + 1
+    border = [tuple(k) for k, count in use.items() if count == 1]
+    try:
+        return chains_from_edges(border)
+    except ValueError:
+        return []
+
+
+def border_path(ids, closed, a, b):
+    """Vertices of border chain ``ids`` from ``a`` to ``b``, the short way round."""
+    ia, ib = ids.index(a), ids.index(b)
+    if not closed:
+        return ids[ia:ib + 1] if ia <= ib else list(reversed(ids[ib:ia + 1]))
+    n = len(ids)
+    forward = [ids[(ia + k) % n] for k in range((ib - ia) % n + 1)]
+    backward = [ids[(ia - k) % n] for k in range((ia - ib) % n + 1)]
+    return forward if len(forward) <= len(backward) else backward
+
+
+def sweep_rows(row, stroke, rows):
+    """Extrude ``row`` along ``stroke``: ``rows`` new rows, each shifted by the
+    stroke's offset from its start point at evenly spaced arc lengths."""
+    samples = resample_polyline(stroke, rows + 1)
+    origin = samples[0]
+    result = [list(row)]
+    for k in range(1, rows + 1):
+        offset = sub(samples[k], origin)
+        result.append([add(p, offset) for p in row])
+    return result
 
 
 def build_strip_grid(rail_a, rail_b, spans_across, closed=False):
@@ -184,24 +227,18 @@ def border_sides(faces):
     grid). Returns a list of ``(vertex_ids, closed)``; a border loop without
     corners (the rim of a cylinder) is one closed side.
     """
-    use = {}
     degree = {}
+    edges = set()
     for verts in faces:
         n = len(verts)
         for i in range(n):
-            key = frozenset((verts[i], verts[(i + 1) % n]))
-            use[key] = use.get(key, 0) + 1
-    for key in use:
+            edges.add(frozenset((verts[i], verts[(i + 1) % n])))
+    for key in edges:
         for v in key:
             degree[v] = degree.get(v, 0) + 1
-    border = [tuple(k) for k, count in use.items() if count == 1]
-    try:
-        chains = chains_from_edges(border)
-    except ValueError:
-        return []  # borders touching at a vertex; too ambiguous to split
 
     sides = []
-    for ids, closed in chains:
+    for ids, closed in border_loops(faces):
         corners = [i for i, v in enumerate(ids) if degree[v] == 2]
         if closed:
             if not corners:

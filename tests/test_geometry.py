@@ -149,6 +149,34 @@ class BorderTest(unittest.TestCase):
         self.assertIsNone(g.bridge_cost(side, False, near, True))
 
 
+class BorderOpsTest(unittest.TestCase):
+    def test_border_loop_of_grid(self):
+        loops = g.border_loops(RingTest.GRID)
+        self.assertEqual(len(loops), 1)
+        ids, closed = loops[0]
+        self.assertTrue(closed)
+        self.assertEqual(len(ids), 10)
+
+    def test_border_path_short_way(self):
+        ids = [0, 1, 2, 3, 7, 11, 10, 9, 8, 4]
+        self.assertEqual(g.border_path(ids, True, 1, 3), [1, 2, 3])
+        self.assertEqual(g.border_path(ids, True, 1, 4), [1, 0, 4])
+        self.assertEqual(g.border_path([5, 6, 7, 8], False, 8, 6), [8, 7, 6])
+
+    def test_align_order(self):
+        a = [(0, 0, 0), (1, 0, 0), (2, 0, 0)]
+        b = [(2, 1, 0), (1, 1, 0), (0, 1, 0)]
+        self.assertEqual(g.align_order(a, b), [2, 1, 0])
+
+    def test_sweep_rows(self):
+        row = [(0, 0, 0), (1, 0, 0)]
+        stroke = [(5, 0, 0), (5, 2, 0)]
+        rows = g.sweep_rows(row, stroke, 2)
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(close(rows[1][1], (1, 1, 0)))
+        self.assertTrue(close(rows[2][0], (0, 2, 0)))
+
+
 class RelaxTest(unittest.TestCase):
     def test_moves_towards_neighbour_average(self):
         pos = {0: (0, 0, 0), 1: (1, 5, 0), 2: (2, 0, 0)}

@@ -230,17 +230,27 @@ def build_strip_from_rails(rail_a, rail_b, spans_along=0, spans_across=1,
     """
     projector = Projector() if snap else None
     grid = StripGrid(rail_a, rail_b, spans_along, spans_across, projector)
-    exact_a, exact_b = grid.exact_a, grid.exact_b
-    columns, rows, tolerance = grid.columns, grid.rows, grid.tolerance
-    closed = grid.closed
-
-    strip = _create_grid_mesh(grid.vertices, columns, rows)
-    display.style_retopo(strip)
 
     targets = []
-    for rail, exact in ((rail_a, exact_a), (rail_b, exact_b)):
+    for rail, exact in ((rail_a, grid.exact_a), (rail_b, grid.exact_b)):
         if exact and rail.mesh not in targets:
             targets.append(rail.mesh)
+    strip = mesh_from_grid(grid.vertices, grid.columns, grid.rows, grid.closed,
+                           grid.tolerance, targets if merge else [], projector)
+    return strip, Rail(grid.far_row(), grid.closed, strip)
+
+
+def mesh_from_grid(vertices, columns, rows, closed, tolerance, targets=(), projector=None):
+    """Turn a row major vertex grid into a styled retopo mesh.
+
+    Normals face away from the live surface, a closed grid (last column
+    repeating the first) has its seam welded, and the result is merged
+    into ``targets`` when given.
+    """
+    strip = _create_grid_mesh(vertices, columns, rows)
+    display.style_retopo(strip)
+
+    targets = list(targets)
     reference = projector if projector else (Projector(targets[0]) if targets else None)
     _orient_to(strip, reference)
 
@@ -251,8 +261,7 @@ def build_strip_from_rails(rail_a, rail_b, spans_along=0, spans_across=1,
             seam.append("%s.vtx[%d]" % (strip, j * columns + columns - 1))
         cmds.polyMergeVertex(seam, distance=tolerance, constructionHistory=False)
 
-    if merge and targets:
+    if targets:
         strip = _merge_into(targets, strip, tolerance)
         display.style_retopo(strip)
-
-    return strip, Rail(grid.far_row(), closed, strip)
+    return strip
