@@ -9,7 +9,7 @@ try:
 except ImportError:
     from PySide2 import QtWidgets
 
-from nine_retopo import brush, loops, rail_tool, relax, strip, surface
+from nine_retopo import brush, display, loops, rail_tool, relax, strip, surface
 
 WINDOW_NAME = "nineRetopoWindow"
 
@@ -92,16 +92,23 @@ class RetopoWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         self.strip_snap.setChecked(True)
         self.rail_smooth = _spin(3, 0, 50, "Smoothing passes for freehand strokes")
         draw_btn = QtWidgets.QPushButton("Draw Rails")
-        draw_btn.setToolTip("Drag on the live surface. Each new rail builds a strip "
-                            "from the previous one. Shift-drag starts a new chain.")
+        draw_btn.setToolTip("Drag on the live surface. The strip is previewed while you "
+                            "draw and built on release; each new rail continues from the "
+                            "previous one. Shift-drag starts a new chain. Ctrl-drag over a "
+                            "retopo mesh slides a new edge loop and inserts it on release.")
         draw_btn.clicked.connect(lambda: _run(
             rail_tool.activate, self.spans_along.value(), self.spans_across.value(),
             self.rail_smooth.value()))
         new_chain_btn = QtWidgets.QPushButton("New Chain")
         new_chain_btn.clicked.connect(lambda: _run(rail_tool.reset))
+        look_btn = QtWidgets.QPushButton("Retopo Look")
+        look_btn.setToolTip("Give the selected meshes the translucent retopo shader and "
+                            "let Ctrl-drag cut them.")
+        look_btn.clicked.connect(lambda: _run(self._style_selection))
         draw_row = QtWidgets.QHBoxLayout()
         draw_row.addWidget(draw_btn)
         draw_row.addWidget(new_chain_btn)
+        draw_row.addWidget(look_btn)
         for spin in (self.spans_along, self.spans_across, self.rail_smooth):
             spin.valueChanged.connect(self._sync_rail_tool)
 
@@ -117,6 +124,16 @@ class RetopoWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         form.addRow(self.strip_snap)
         form.addRow(btn)
         return group
+
+    @staticmethod
+    def _style_selection():
+        meshes = cmds.ls(selection=True, objectsOnly=True, long=True) or []
+        meshes = [m for m in meshes
+                  if cmds.listRelatives(m, shapes=True, type="mesh", fullPath=True)]
+        if not meshes:
+            raise RuntimeError("Select the retopo meshes to style.")
+        for mesh in meshes:
+            display.style_retopo(mesh)
 
     def _sync_rail_tool(self, *_):
         rail_tool.tool.spans_along = self.spans_along.value()

@@ -21,6 +21,11 @@ class MeshRaycaster(object):
 
     def hit(self, x, y):
         """World space point under screen ``x, y``, or None."""
+        result = self.hit_face(x, y)
+        return result[0] if result else None
+
+    def hit_face(self, x, y):
+        """``(point, face_id, ray_distance)`` under screen ``x, y``, or None."""
         source, direction = view_ray(x, y)
         hit = self._fn.closestIntersection(
             om.MFloatPoint(source), om.MFloatVector(direction),
@@ -28,4 +33,4 @@ class MeshRaycaster(object):
         if not hit or hit[2] < 0:
             return None
         p = hit[0]
-        return (p.x, p.y, p.z)
+        return (p.x, p.y, p.z), hit[2], hit[1]

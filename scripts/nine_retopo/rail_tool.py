@@ -1,23 +1,26 @@
 """zRail-style rail drawing tool.
 
-Drag on the live surface to draw a rail. The second rail builds a strip
-between the two, and every following rail continues from the edge of the
-previous strip, welded to it. Start with mesh edges selected to continue
-from an existing retopo mesh. Shift-drag starts a new chain.
+Drag on the live surface to draw a rail. While the stroke is drawn, the
+strip it would make is previewed live; releasing builds it, and every
+following rail continues from the edge of the previous strip, welded to it.
+Start with mesh edges selected to continue from an existing retopo mesh.
+Shift-drag starts a new chain. Ctrl-drag over a retopo mesh slides a new
+edge loop along the ring under the cursor and inserts it on release.
 """
 
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
-from nine_retopo import geometry, mesh_utils, strip
+from nine_retopo import display, geometry, loops, mesh_utils, strip
 from nine_retopo.surface import Projector, get_live_surface
 from nine_retopo.viewport import MeshRaycaster
 
 CONTEXT = "nineRetopoRailCtx"
-PREVIEW_COLOR = 17  # yellow
+RAIL_COLOR = 17  # yellow
+CUT_COLOR = 18  # cyan
 
 
-def _preview_curve(points, closed, curve=None):
+def _preview_curve(points, closed, curve=None, color=RAIL_COLOR):
     """Create or update a linear curve through ``points``."""
     pts = list(points) + ([points[0]] if closed else [])
     if curve and cmds.objExists(curve):
@@ -26,15 +29,66 @@ def _preview_curve(points, closed, curve=None):
     curve = cmds.curve(degree=1, point=pts, name="retopoRail#")
     shape = cmds.listRelatives(curve, shapes=True, fullPath=True)[0]
     cmds.setAttr(shape + ".overrideEnabled", True)
-    cmds.setAttr(shape + ".overrideColor", PREVIEW_COLOR)
+    cmds.setAttr(shape + ".overrideColor", color)
     if cmds.attributeQuery("lineWidth", node=shape, exists=True):
-        cmds.setAttr(shape + ".lineWidth", 2)
+        cmds.setAttr(shape + ".lineWidth", 3)
     return cmds.ls(curve, long=True)[0]
 
 
 def _delete(node):
     if node and cmds.objExists(node):
         cmds.delete(node)
+
+
+def _rail_after_cut(rail, inserted):
+    """Insert the new loop's vertices into ``rail`` where it crosses its edges.
+
+    ``inserted`` is a list of ``(point_a, point_b, new_point)`` for every
+    split edge. Keeps the chain's far edge in step with the mesh so the next
+    strip still welds vertex for vertex.
+    """
+    pts = rail.points
+    if len(pts) < 2:
+        return rail
+    tol = geometry.polyline_length(pts, rail.closed) / rail.segments * 0.01
+    same = lambda p, q: geometry.distance(p, q) <= tol
+    result = []
+    for i in range(len(pts)):
+        result.append(pts[i])
+        if i == len(pts) - 1 and not rail.closed:
+            break
+        p, q = pts[i], pts[(i + 1) % len(pts)]
+        for a, b, new in inserted:
+            if (same(p, a) and same(q, b)) or (same(p, b) and same(q, a)):
+                result.append(new)
+                break
+    return strip.Rail(result, rail.closed, rail.mesh)
+
+
+class StripPreview(object):
+    """A throwaway mesh showing the strip the current stroke would build."""
+
+    def __init__(self):
+        self.mesh = None
+        self._size = None
+
+    def update(self, grid):
+        size = (grid.columns, grid.rows)
+        if self._size != size or not (self.mesh and cmds.objExists(self.mesh)):
+            self.clear()
+            mesh = cmds.polyPlane(subdivisionsX=grid.columns - 1,
+                                  subdivisionsY=grid.rows - 1,
+                                  constructionHistory=False, name="retopoPreview#")[0]
+            self.mesh = cmds.ls(mesh, long=True)[0]
+            self._size = size
+            display.style_preview(self.mesh)
+        points = om.MPointArray([om.MPoint(*p) for p in grid.vertices])
+        om.MFnMesh(mesh_utils.mesh_path(self.mesh)).setPoints(points, om.MSpace.kWorld)
+
+    def clear(self):
+        _delete(self.mesh)
+        self.mesh = None
+        self._size = None
 
 
 class RailTool(object):
@@ -48,6 +102,12 @@ class RailTool(object):
         self._stroke_curve = None
         self._last_xy = None
         self._raycaster = None
+        self._projector = None
+        self._preview = StripPreview()
+        self._mode = None
+        self._casters = []
+        self._ring = None
+        self._cut_curve = None
 
     def activate(self):
         if not get_live_surface():
@@ -59,7 +119,9 @@ class RailTool(object):
             self._rail = edge_rails[0]
 
         callbacks = dict(pressCommand=self._press, dragCommand=self._drag,
-                         releaseCommand=self._release)
+                         releaseCommand=self._release,
+                         initialize=display.show_selected_wireframe,
+                         finalize=self._finalize)
         if cmds.draggerContext(CONTEXT, exists=True):
             cmds.draggerContext(CONTEXT, edit=True, **callbacks)
         else:
@@ -73,31 +135,56 @@ class RailTool(object):
         self._rail = None
         self._rail_curve = None
 
+    def _finalize(self):
+        self._preview.clear()
+        _delete(self._cut_curve)
+        self._cut_curve = None
+        display.restore_wireframe()
+
+    def _pending(self):
+        pending = self._rail
+        if pending is not None and pending.mesh and not cmds.objExists(pending.mesh):
+            pending = strip.Rail(pending.points, pending.closed)  # mesh was undone
+            self._rail = pending
+        return pending
+
     # Dragger callbacks ----------------------------------------------------
     def _press(self):
         surface = get_live_surface()
         if not surface:
             om.MGlobal.displayError("Set a live surface first.")
             return
-        if cmds.draggerContext(CONTEXT, query=True, modifier=True) == "shift":
+        modifier = cmds.draggerContext(CONTEXT, query=True, modifier=True)
+        x, y, _ = cmds.draggerContext(CONTEXT, query=True, anchorPoint=True)
+        self._projector = Projector()
+        if modifier == "ctrl":
+            self._start_cut(x, y)
+            return
+        if modifier == "shift":
             self.reset()
+        self._mode = "draw"
         self._raycaster = MeshRaycaster(mesh_utils.mesh_path(surface))
         self._stroke = []
         self._stroke_curve = None
         self._last_xy = None
-        x, y, _ = cmds.draggerContext(CONTEXT, query=True, anchorPoint=True)
         self._add_point(x, y)
 
     def _drag(self):
-        if self._raycaster is None:
-            return
         x, y, _ = cmds.draggerContext(CONTEXT, query=True, dragPoint=True)
-        self._add_point(x, y)
+        if self._mode == "draw":
+            self._add_point(x, y)
+        elif self._mode == "cut":
+            self._update_cut(x, y)
 
     def _release(self):
-        if self._raycaster is None:
+        mode, self._mode = self._mode, None
+        if mode == "cut":
+            self._finish_cut()
+            return
+        if mode != "draw":
             return
         self._raycaster = None
+        self._preview.clear()
         _delete(self._stroke_curve)
         self._stroke_curve = None
         try:
@@ -118,27 +205,42 @@ class RailTool(object):
         self._stroke.append(p)
         if len(self._stroke) >= 2:
             self._stroke_curve = _preview_curve(self._stroke, False, self._stroke_curve)
+            self._update_preview()
             cmds.refresh(currentView=True)
+
+    def _stroke_rail(self, points):
+        closed = geometry.is_closed_stroke(points)
+        points = geometry.smooth_polyline(points, self.smooth, closed)
+        return strip.Rail([self._projector.project(p) for p in points], closed)
+
+    def _update_preview(self):
+        """Show the strip the stroke so far would build."""
+        pending = self._pending()
+        rail = self._stroke_rail(self._stroke)
+        if pending is None or pending.closed != rail.closed:
+            self._preview.clear()
+            return
+        try:
+            grid = strip.StripGrid(pending, rail, self.spans_along, self.spans_across,
+                                   self._projector)
+        except (RuntimeError, ValueError):
+            self._preview.clear()
+            return
+        self._preview.update(grid)
 
     def _finish_stroke(self, points):
         if len(points) < 2:
             return
-        closed = geometry.is_closed_stroke(points)
-        points = geometry.smooth_polyline(points, self.smooth, closed)
-        projector = Projector()
-        points = [projector.project(p) for p in points]
-        rail = strip.Rail(points, closed)
+        rail = self._stroke_rail(points)
 
-        pending = self._rail
-        if pending is not None and pending.mesh and not cmds.objExists(pending.mesh):
-            pending = strip.Rail(pending.points, pending.closed)  # mesh was undone
-        if pending is None or pending.closed != closed:
+        pending = self._pending()
+        if pending is None or pending.closed != rail.closed:
             if pending is not None:
                 om.MGlobal.displayWarning(
                     "Open and closed rails can't be bridged; starting a new chain.")
             self.reset()
             self._rail = rail
-            self._rail_curve = _preview_curve(points, closed)
+            self._rail_curve = _preview_curve(rail.points, rail.closed)
             return
 
         mesh, far_rail = strip.build_strip_from_rails(
@@ -147,6 +249,56 @@ class RailTool(object):
         self._rail_curve = None
         self._rail = far_rail
         cmds.select(mesh)
+
+    # Edge loop cutting ----------------------------------------------------
+    def _start_cut(self, x, y):
+        meshes = set(display.retopo_meshes())
+        pending = self._pending()
+        if pending is not None and pending.mesh:
+            meshes.add(pending.mesh)
+        self._casters = [(m, MeshRaycaster(mesh_utils.mesh_path(m))) for m in meshes]
+        if not self._casters:
+            om.MGlobal.displayWarning("No retopo mesh to cut yet.")
+            return
+        self._mode = "cut"
+        self._ring = None
+        self._update_cut(x, y)
+
+    def _update_cut(self, x, y):
+        best = None
+        for mesh, caster in self._casters:
+            hit = caster.hit_face(x, y)
+            if hit and (best is None or hit[2] < best[1][2]):
+                best = (mesh, hit)
+        if best is None:
+            return  # keep the last ring while the cursor is off the mesh
+        mesh, (point, face, _) = best
+        try:
+            self._ring = loops.ring_under(mesh, point, face)
+        except ValueError:
+            return
+        points = self._ring.cut_points(self._projector)
+        if len(points) >= 2:
+            self._cut_curve = _preview_curve(points, self._ring.closed,
+                                             self._cut_curve, CUT_COLOR)
+        cmds.refresh(currentView=True)
+
+    def _finish_cut(self):
+        _delete(self._cut_curve)
+        self._cut_curve = None
+        ring, self._ring = self._ring, None
+        self._casters = []
+        if ring is None:
+            return
+        try:
+            inserted = loops.split_ring(ring, snap=True)
+        except Exception as exc:  # keep the tool alive, report in the status line
+            om.MGlobal.displayError(str(exc))
+            return
+        cmds.select(ring.mesh)
+        pending = self._pending()
+        if pending is not None and pending.mesh == ring.mesh:
+            self._rail = _rail_after_cut(pending, inserted)
 
 
 tool = RailTool()

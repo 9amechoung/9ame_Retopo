@@ -3,7 +3,7 @@
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
-from nine_retopo import geometry, mesh_utils
+from nine_retopo import display, geometry, mesh_utils
 from nine_retopo.surface import Projector
 
 CURVE_SAMPLES_PER_CV = 8
@@ -159,6 +159,48 @@ def build_strip(spans_along=0, spans_across=1, merge=True, snap=True):
     return mesh
 
 
+class StripGrid(object):
+    """Vertex grid of a strip, row major with ``columns`` x ``rows`` vertices.
+
+    Closed strips repeat their first column at the end; the seam is welded
+    once the mesh exists.
+    """
+
+    def __init__(self, rail_a, rail_b, spans_along=0, spans_across=1, projector=None):
+        if rail_a.closed != rail_b.closed:
+            raise RuntimeError("Both rails must be open or both closed.")
+        self.closed = rail_a.closed
+
+        self.spans = _resolve_spans(rail_a, rail_b, spans_along, spans_across)
+        points_a, self.exact_a = _rail_points(rail_a, self.spans)
+        points_b, self.exact_b = _rail_points(rail_b, self.spans)
+        points_b = geometry.align_rails(points_a, points_b, self.closed)
+        if self.closed:
+            points_a = points_a + [points_a[0]]
+            points_b = points_b + [points_b[0]]
+
+        self.columns = len(points_a)
+        self.rows = spans_across + 1
+        self.vertices, _ = geometry.build_strip_grid(points_a, points_b, spans_across)
+
+        if projector:
+            for j in range(self.rows):
+                # Keep edge rail rows exactly in place so they weld cleanly.
+                if (j == 0 and self.exact_a) or (j == self.rows - 1 and self.exact_b):
+                    continue
+                for i in range(self.columns):
+                    k = j * self.columns + i
+                    self.vertices[k] = projector.project(self.vertices[k])
+
+        seg_length = geometry.polyline_length(points_a) / max(self.spans, 1)
+        self.tolerance = max(seg_length * 0.01, 1e-5)
+
+    def far_row(self):
+        start = (self.rows - 1) * self.columns
+        row = self.vertices[start:start + self.columns]
+        return row[:-1] if self.closed else row
+
+
 def build_strip_from_rails(rail_a, rail_b, spans_along=0, spans_across=1,
                            merge=True, snap=True):
     """Build a quad strip between two rails.
@@ -166,37 +208,14 @@ def build_strip_from_rails(rail_a, rail_b, spans_along=0, spans_across=1,
     Returns ``(mesh, far_rail)`` where ``far_rail`` is the strip's edge along
     ``rail_b``, usable as the first rail of a following strip.
     """
-    if rail_a.closed != rail_b.closed:
-        raise RuntimeError("Both rails must be open or both closed.")
-    closed = rail_a.closed
-
-    spans = _resolve_spans(rail_a, rail_b, spans_along, spans_across)
-    points_a, exact_a = _rail_points(rail_a, spans)
-    points_b, exact_b = _rail_points(rail_b, spans)
-    points_b = geometry.align_rails(points_a, points_b, closed)
-    if closed:
-        # Build open and weld the seam afterwards.
-        points_a = points_a + [points_a[0]]
-        points_b = points_b + [points_b[0]]
-
-    columns = len(points_a)
-    rows = spans_across + 1
-    vertices, _ = geometry.build_strip_grid(points_a, points_b, spans_across)
-
     projector = Projector() if snap else None
-    if projector:
-        for j in range(rows):
-            # Keep edge rail rows exactly in place so they weld cleanly.
-            if (j == 0 and exact_a) or (j == rows - 1 and exact_b):
-                continue
-            for i in range(columns):
-                k = j * columns + i
-                vertices[k] = projector.project(vertices[k])
+    grid = StripGrid(rail_a, rail_b, spans_along, spans_across, projector)
+    exact_a, exact_b = grid.exact_a, grid.exact_b
+    columns, rows, tolerance = grid.columns, grid.rows, grid.tolerance
+    closed = grid.closed
 
-    seg_length = geometry.polyline_length(points_a) / max(spans, 1)
-    tolerance = max(seg_length * 0.01, 1e-5)
-
-    strip = _create_grid_mesh(vertices, columns, rows)
+    strip = _create_grid_mesh(grid.vertices, columns, rows)
+    display.style_retopo(strip)
 
     targets = []
     for rail, exact in ((rail_a, exact_a), (rail_b, exact_b)):
@@ -214,8 +233,6 @@ def build_strip_from_rails(rail_a, rail_b, spans_along=0, spans_across=1,
 
     if merge and targets:
         strip = _merge_into(targets, strip, tolerance)
+        display.style_retopo(strip)
 
-    far_row = vertices[(rows - 1) * columns:rows * columns]
-    if closed:
-        far_row = far_row[:-1]
-    return strip, Rail(far_row, closed, strip)
+    return strip, Rail(grid.far_row(), closed, strip)

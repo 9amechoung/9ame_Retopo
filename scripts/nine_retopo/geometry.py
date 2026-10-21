@@ -195,6 +195,63 @@ def chains_from_edges(edges):
     return chains
 
 
+def closest_param_on_segment(point, a, b):
+    """Parameter in [0, 1] of the point on segment ``a``-``b`` closest to ``point``."""
+    ab = sub(b, a)
+    denom = dot(ab, ab)
+    if denom <= EPSILON:
+        return 0.0
+    return min(max(dot(sub(point, a), ab) / denom, 0.0), 1.0)
+
+
+def edge_ring(faces, a, b):
+    """Walk the quad edge ring through edge ``(a, b)``.
+
+    ``faces`` is a list of vertex id lists. Returns ``(edges, closed)`` where
+    ``edges`` is an ordered list of ``(v0, v1)`` pairs oriented consistently
+    with ``(a, b)``: every ``v0`` lies on the same side of the ring. The walk
+    stops at borders and at faces that are not quads.
+    """
+    edge_faces = {}
+    for f, verts in enumerate(faces):
+        n = len(verts)
+        for i in range(n):
+            key = frozenset((verts[i], verts[(i + 1) % n]))
+            edge_faces.setdefault(key, []).append(f)
+
+    root = frozenset((a, b))
+
+    def walk(face):
+        result = []
+        cur = (a, b)
+        visited = set()
+        while face is not None and face not in visited:
+            visited.add(face)
+            verts = faces[face]
+            if len(verts) != 4:
+                break
+            ia, ib = verts.index(cur[0]), verts.index(cur[1])
+            next_a = verts[(ia - 1) % 4] if verts[(ia + 1) % 4] == cur[1] else verts[(ia + 1) % 4]
+            next_b = verts[(ib - 1) % 4] if verts[(ib + 1) % 4] == cur[0] else verts[(ib + 1) % 4]
+            cur = (next_a, next_b)
+            key = frozenset(cur)
+            if key == root:
+                return result, True
+            result.append(cur)
+            others = [f for f in edge_faces.get(key, ()) if f != face]
+            face = others[0] if others else None
+        return result, False
+
+    adjacent = edge_faces.get(root, [])
+    if not adjacent:
+        raise ValueError("edge (%d, %d) is not part of any face" % (a, b))
+    forward, closed = walk(adjacent[0])
+    if closed:
+        return [(a, b)] + forward, True
+    backward = walk(adjacent[1])[0] if len(adjacent) > 1 else []
+    return list(reversed(backward)) + [(a, b)] + forward, False
+
+
 def polygon_normal(points):
     """Newell normal of a polygon (not normalized)."""
     nx = ny = nz = 0.0

@@ -86,6 +86,40 @@ class ChainTest(unittest.TestCase):
             g.chains_from_edges([(0, 1), (0, 2), (0, 3)])
 
 
+class RingTest(unittest.TestCase):
+    # 3 x 2 quad grid, vertex id = row * 4 + column.
+    GRID = [[0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6],
+            [4, 5, 9, 8], [5, 6, 10, 9], [6, 7, 11, 10]]
+
+    def test_open_ring_keeps_orientation(self):
+        edges, closed = g.edge_ring(self.GRID, 5, 6)
+        self.assertFalse(closed)
+        self.assertEqual(sorted(edges), [(1, 2), (5, 6), (9, 10)])
+
+    def test_ring_across_columns(self):
+        edges, closed = g.edge_ring(self.GRID, 1, 5)
+        self.assertFalse(closed)
+        self.assertEqual(sorted(edges), [(0, 4), (1, 5), (2, 6), (3, 7)])
+
+    def test_closed_ring(self):
+        # Cylinder of 4 quads: bottom 0-3, top 4-7.
+        faces = [[i, (i + 1) % 4, 4 + (i + 1) % 4, 4 + i] for i in range(4)]
+        edges, closed = g.edge_ring(faces, 1, 5)
+        self.assertTrue(closed)
+        self.assertEqual(len(edges), 4)
+        self.assertEqual(edges[0], (1, 5))
+        self.assertTrue(all(v0 < 4 for v0, _ in edges))
+
+    def test_stops_at_triangle(self):
+        faces = [[0, 1, 4, 3], [1, 2, 4]]
+        edges, _ = g.edge_ring(faces, 0, 3)
+        self.assertEqual(edges, [(0, 3), (1, 4)])
+
+    def test_closest_param(self):
+        self.assertAlmostEqual(g.closest_param_on_segment((3, 5, 0), (0, 0, 0), (10, 0, 0)), 0.3)
+        self.assertEqual(g.closest_param_on_segment((-4, 0, 0), (0, 0, 0), (10, 0, 0)), 0.0)
+
+
 class RelaxTest(unittest.TestCase):
     def test_moves_towards_neighbour_average(self):
         pos = {0: (0, 0, 0), 1: (1, 5, 0), 2: (2, 0, 0)}
