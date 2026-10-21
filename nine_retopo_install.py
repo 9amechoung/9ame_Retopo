@@ -17,7 +17,7 @@ PLUGIN_NAME = "nineRetopo"
 def install():
     root = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
     # Remove any previous install (also from another folder) first.
-    runpy.run_path(os.path.join(root, "uninstall.py"))["unload"]()
+    runpy.run_path(os.path.join(root, "nine_retopo_uninstall.py"))["unload"]()
 
     modules_dir = os.path.join(cmds.internalVar(userAppDir=True), "modules")
     if not os.path.isdir(modules_dir):
@@ -38,4 +38,7 @@ def install():
 
 
 def onMayaDroppedPythonFile(*args):
+    # Maya imports dropped files by name; drop the cached module so the next
+    # drop (e.g. from a newer folder) runs that file instead of this one.
+    sys.modules.pop(__name__, None)
     install()

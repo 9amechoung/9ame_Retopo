@@ -48,7 +48,7 @@ def _build_menu():
 def _uninstall():
     # Deferred so the plug-in isn't unloaded from inside its own menu callback.
     plugin_dir = os.path.dirname(cmds.pluginInfo("nineRetopo", query=True, path=True))
-    script = os.path.join(os.path.dirname(plugin_dir), "uninstall.py")
+    script = os.path.join(os.path.dirname(plugin_dir), "nine_retopo_uninstall.py")
     runpy.run_path(script)["uninstall"]()
 
 

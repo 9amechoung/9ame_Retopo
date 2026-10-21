@@ -60,4 +60,7 @@ def uninstall(confirm=True):
 
 
 def onMayaDroppedPythonFile(*args):
+    # Maya imports dropped files by name; drop the cached module so the next
+    # drop (e.g. from a newer folder) runs that file instead of this one.
+    sys.modules.pop(__name__, None)
     uninstall()
