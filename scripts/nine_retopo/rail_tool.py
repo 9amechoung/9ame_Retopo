@@ -6,12 +6,15 @@ following rail continues from the edge of the previous strip, welded to it.
 Start with mesh edges selected to continue from an existing retopo mesh.
 Shift-drag starts a new chain. Ctrl-drag over a retopo mesh slides a new
 edge loop along the ring under the cursor and inserts it on release.
+
+Chains remember their rails (chain.py), so changing the span counts in the
+tool window rebuilds the chain being drawn, or the selected chain.
 """
 
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
-from nine_retopo import display, geometry, loops, mesh_utils, strip
+from nine_retopo import chain, display, geometry, loops, mesh_utils, strip
 from nine_retopo.surface import Projector, get_live_surface
 from nine_retopo.viewport import MeshRaycaster
 
@@ -86,7 +89,7 @@ class StripPreview(object):
         om.MFnMesh(mesh_utils.mesh_path(self.mesh)).setPoints(points, om.MSpace.kWorld)
 
     def clear(self):
-        _delete(self.mesh)
+        display.delete_with_overlay(self.mesh)
         self.mesh = None
         self._size = None
 
@@ -108,6 +111,7 @@ class RailTool(object):
         self._casters = []
         self._ring = None
         self._cut_curve = None
+        self._chain = None  # record of the chain being drawn (see chain.py)
 
     def activate(self):
         if not get_live_surface():
@@ -134,6 +138,27 @@ class RailTool(object):
         _delete(self._rail_curve)
         self._rail = None
         self._rail_curve = None
+        self._chain = None
+
+    def chain_mesh(self):
+        """The mesh of the chain currently being drawn, if it is editable."""
+        if self._chain is not None and self._rail is not None and self._rail.mesh \
+                and cmds.objExists(self._rail.mesh):
+            return self._rail.mesh
+        return None
+
+    def apply_spans(self, along=None, across=None):
+        """Rebuild the selected chain (or the one being drawn) with new counts."""
+        target = chain.selected_chain() or self.chain_mesh()
+        if target is None:
+            return None
+        drawing = target == self.chain_mesh()
+        mesh, far = chain.rebuild(target, along, across)
+        if drawing:
+            self._rail = far
+            self._chain = chain.load(mesh)
+        cmds.select(mesh)
+        return mesh
 
     def _finalize(self):
         self._preview.clear()
@@ -221,8 +246,8 @@ class RailTool(object):
             self._preview.clear()
             return
         try:
-            grid = strip.StripGrid(pending, rail, self.spans_along, self.spans_across,
-                                   self._projector)
+            grid = strip.StripGrid(pending, rail, self._along_for(pending),
+                                   self.spans_across, self._projector)
         except (RuntimeError, ValueError):
             self._preview.clear()
             return
@@ -244,11 +269,24 @@ class RailTool(object):
             return
 
         mesh, far_rail = strip.build_strip_from_rails(
-            pending, rail, self.spans_along, self.spans_across, merge=True, snap=True)
+            pending, rail, self._along_for(pending), self.spans_across,
+            merge=True, snap=True)
         _delete(self._rail_curve)
         self._rail_curve = None
         self._rail = far_rail
+
+        # Remember the rails so span counts can still be changed afterwards.
+        if pending.mesh is None:
+            self._chain = chain.new_record(pending, self.spans_along)
+        if self._chain is not None:
+            chain.add_strip(self._chain, rail, self.spans_across)
+            chain.save(mesh, self._chain)
         cmds.select(mesh)
+
+    def _along_for(self, pending):
+        # Spans along is a property of the whole chain: only the first strip
+        # takes it from the UI, later ones match the edge they continue from.
+        return self.spans_along if pending.mesh is None else 0
 
     # Edge loop cutting ----------------------------------------------------
     def _start_cut(self, x, y):
@@ -296,9 +334,13 @@ class RailTool(object):
             om.MGlobal.displayError(str(exc))
             return
         cmds.select(ring.mesh)
+        # A hand cut can't be replayed from the rails, so the chain stops
+        # being rebuildable from the span counts.
+        chain.forget(ring.mesh)
         pending = self._pending()
         if pending is not None and pending.mesh == ring.mesh:
             self._rail = _rail_after_cut(pending, inserted)
+            self._chain = None
 
 
 tool = RailTool()

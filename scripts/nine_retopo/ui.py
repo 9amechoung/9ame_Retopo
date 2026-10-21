@@ -9,9 +9,11 @@ try:
 except ImportError:
     from PySide2 import QtWidgets
 
-from nine_retopo import brush, display, loops, rail_tool, relax, strip, surface
+from nine_retopo import brush, chain, display, loops, rail_tool, relax, strip, surface
 
 WINDOW_NAME = "nineRetopoWindow"
+ALONG_COLOR = "#3d7bff"  # blue: the drawn rail direction
+ACROSS_COLOR = "#ff4040"  # red: between two rails
 
 
 def _run(func, *args, **kwargs):
@@ -27,6 +29,11 @@ def _spin(value, minimum, maximum, tooltip=""):
     w.setValue(value)
     w.setToolTip(tooltip)
     return w
+
+
+def _colored_label(text, color):
+    label = QtWidgets.QLabel(u"<span style='color:%s'>■</span> %s" % (color, text))
+    return label
 
 
 def _dspin(value, minimum, maximum, step):
@@ -110,14 +117,25 @@ class RetopoWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         draw_row.addWidget(new_chain_btn)
         draw_row.addWidget(look_btn)
         for spin in (self.spans_along, self.spans_across, self.rail_smooth):
+            spin.setKeyboardTracking(False)  # rebuild once per typed number
             spin.valueChanged.connect(self._sync_rail_tool)
+        self.spans_along.valueChanged.connect(
+            lambda v: _run(rail_tool.tool.apply_spans, along=v))
+        self.spans_across.valueChanged.connect(
+            lambda v: _run(rail_tool.tool.apply_spans, across=v))
+        self.spans_along.setToolTip(
+            "Segments along the drawn rails (blue). 0 = auto. Changing it rebuilds the "
+            "selected chain, or the chain being drawn.")
+        self.spans_across.setToolTip(
+            "Segments between two rails (red). Changing it rebuilds the selected chain, "
+            "or the chain being drawn.")
 
         btn = QtWidgets.QPushButton("Build Strip (select 2 rails)")
         btn.clicked.connect(lambda: _run(
             strip.build_strip, self.spans_along.value(), self.spans_across.value(),
             self.strip_merge.isChecked(), self.strip_snap.isChecked()))
-        form.addRow("Spans along", self.spans_along)
-        form.addRow("Spans across", self.spans_across)
+        form.addRow(_colored_label("Spans along (rail)", ALONG_COLOR), self.spans_along)
+        form.addRow(_colored_label("Spans across", ACROSS_COLOR), self.spans_across)
         form.addRow("Stroke smoothing", self.rail_smooth)
         form.addRow(draw_row)
         form.addRow(self.strip_merge)
@@ -139,6 +157,18 @@ class RetopoWindow(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         rail_tool.tool.spans_along = self.spans_along.value()
         rail_tool.tool.spans_across = self.spans_across.value()
         rail_tool.tool.smooth = self.rail_smooth.value()
+
+    def show_selected_chain(self):
+        """Show the span counts of the selected chain without rebuilding it."""
+        record = chain.load(chain.selected_chain())
+        if not record:
+            return
+        for spin, value in ((self.spans_along, record["along"]),
+                            (self.spans_across, record["across"][-1])):
+            spin.blockSignals(True)
+            spin.setValue(value)
+            spin.blockSignals(False)
+        self._sync_rail_tool()
 
     # Edge loop ----------------------------------------------------------
     def _loop_group(self):
@@ -197,4 +227,7 @@ def show():
         cmds.deleteUI(control)
     window = RetopoWindow()
     window.show(dockable=True)
+    # Selecting a drawn chain shows its span counts; the job dies with the window.
+    cmds.scriptJob(event=["SelectionChanged", lambda: _run(window.show_selected_chain)],
+                   parent=control)
     return window

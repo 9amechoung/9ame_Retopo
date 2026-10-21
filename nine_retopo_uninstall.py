@@ -14,6 +14,7 @@ PLUGIN_NAME = "nineRetopo"
 CONTEXTS = ("nineRetopoRailCtx", "nineRetopoRelaxBrushCtx")
 WORKSPACE_CONTROL = "nineRetopoWindowWorkspaceControl"
 OPTION_VAR = "nineRetopo_liveSurface"
+OVERLAY_TYPE = "nineRetopoOverlay"
 
 
 def unload():
@@ -25,6 +26,15 @@ def unload():
             cmds.deleteUI(ctx, toolContext=True)
     if cmds.workspaceControl(WORKSPACE_CONTROL, exists=True):
         cmds.deleteUI(WORKSPACE_CONTROL)
+
+    if cmds.pluginInfo(PLUGIN_NAME, query=True, loaded=True):
+        # Overlay locators would turn into unknown nodes once the plug-in is gone.
+        overlays = cmds.ls(type=OVERLAY_TYPE, long=True) or []
+        transforms = cmds.listRelatives(overlays, parent=True, fullPath=True) or []
+        if transforms:
+            cmds.delete(transforms)
+            # Deleted nodes live on in the undo queue and keep the plug-in busy.
+            cmds.flushUndo()
 
     if cmds.pluginInfo(PLUGIN_NAME, query=True, registered=True):
         cmds.pluginInfo(PLUGIN_NAME, edit=True, autoload=False)

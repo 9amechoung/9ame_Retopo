@@ -1,6 +1,7 @@
 """How retopo geometry looks in the viewport.
 
-Retopo meshes get a translucent shader so the high poly shows through, and
+Retopo meshes get a translucent shader, and an overlay locator from the
+plug-in that draws their faces and wireframe on top of the high poly. They
 are tagged so the drawing tool can find them again. While the rail tool is
 active, selected objects are drawn with their full wireframe.
 """
@@ -8,6 +9,8 @@ active, selected objects are drawn with their full wireframe.
 import maya.cmds as cmds
 
 TAG = "nineRetopoMesh"
+PLUGIN = "nineRetopo"
+OVERLAY_TYPE = "nineRetopoOverlay"
 RETOPO_SHADER = ("nineRetopo_mtl", (0.32, 0.28, 0.95), 0.35)
 PREVIEW_SHADER = ("nineRetopoPreview_mtl", (0.25, 0.95, 0.35), 0.45)
 
@@ -33,15 +36,65 @@ def _assign(mesh, spec):
     cmds.sets(mesh, edit=True, forceElement=_shading_group(spec))
 
 
+def remove_orphan_overlays():
+    """Delete overlays whose retopo mesh no longer exists."""
+    for overlay in cmds.ls(type=OVERLAY_TYPE, long=True) or []:
+        if not cmds.listConnections(overlay + ".inMesh", source=True, destination=False):
+            cmds.delete(cmds.listRelatives(overlay, parent=True, fullPath=True))
+
+
+def attach_overlay(mesh, preview=False):
+    """Draw ``mesh`` on top of the high poly with a nineRetopoOverlay locator.
+
+    Does nothing when the plug-in (which defines the overlay) isn't loaded.
+    """
+    if not cmds.pluginInfo(PLUGIN, query=True, loaded=True):
+        return None
+    shape = cmds.listRelatives(mesh, shapes=True, type="mesh", fullPath=True,
+                               noIntermediate=True)[0]
+    existing = cmds.listConnections(shape + ".worldMesh[0]", type=OVERLAY_TYPE,
+                                    shapes=True) or []
+    if existing:
+        return existing[0]
+    short = mesh.split("|")[-1]
+    xform = cmds.createNode("transform", name=short + "_overlay#", skipSelect=True)
+    overlay = cmds.createNode(OVERLAY_TYPE, name=short + "_overlayShape#", parent=xform,
+                              skipSelect=True)
+    cmds.connectAttr(shape + ".worldMesh[0]", overlay + ".inMesh")
+    cmds.setAttr(overlay + ".preview", preview)
+    # Reference display keeps the locator out of viewport selection.
+    cmds.setAttr(overlay + ".overrideEnabled", True)
+    cmds.setAttr(overlay + ".overrideDisplayType", 2)
+    cmds.setAttr(xform + ".hiddenInOutliner", True)
+    for attr in ("translate", "rotate", "scale"):
+        cmds.setAttr(xform + "." + attr, lock=True)
+    return overlay
+
+
+def delete_with_overlay(mesh):
+    """Delete ``mesh`` together with the overlay drawing it."""
+    if not (mesh and cmds.objExists(mesh)):
+        return
+    shapes = cmds.listRelatives(mesh, shapes=True, type="mesh", fullPath=True) or []
+    for shape in shapes:
+        for overlay in cmds.listConnections(shape + ".worldMesh", type=OVERLAY_TYPE,
+                                            shapes=True) or []:
+            cmds.delete(cmds.listRelatives(overlay, parent=True, fullPath=True))
+    cmds.delete(mesh)
+
+
 def style_retopo(mesh):
     """Tag ``mesh`` as retopo geometry and give it the translucent look."""
     if not cmds.attributeQuery(TAG, node=mesh, exists=True):
         cmds.addAttr(mesh, longName=TAG, attributeType="bool", defaultValue=True)
     _assign(mesh, RETOPO_SHADER)
+    remove_orphan_overlays()
+    attach_overlay(mesh)
 
 
 def style_preview(mesh):
     _assign(mesh, PREVIEW_SHADER)
+    attach_overlay(mesh, preview=True)
 
 
 def retopo_meshes():
